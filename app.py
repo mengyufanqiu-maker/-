@@ -11,11 +11,8 @@ import mimetypes
 import socket
 
 import requests
-from dotenv import load_dotenv
 from flask import Flask, Response, render_template, request, stream_with_context
 from flask_cors import CORS
-
-load_dotenv()
 
 app = Flask(__name__)
 CORS(app)
