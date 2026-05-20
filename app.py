@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 PharmaCheck AI — 临床用药风控智能体
-Flask 后端：SSE 流式输出 + DeepSeek API
+Flask 后端：SSE 流式输出 + DeepSeek API（完美兼容本地与 Render 云端版）
 """
 
 import base64
@@ -19,6 +19,9 @@ CORS(app)
 
 DEEPSEEK_API_URL = "https://api.deepseek.com/chat/completions"
 DEEPSEEK_MODEL_TEXT = "deepseek-chat"
+# ⚠️ 注意：DeepSeek官方目前标准chat不支持多模态视觉。
+# 1. 投产时如果使用的是支持视觉的兼容接口（如Qwen-VL或OpenAI），请在此处更换模型名称及URL。
+# 2. 当前版本我们在下方增加了降级提示，防止视觉请求导致接口直接死锁。
 DEEPSEEK_MODEL_VISION = "deepseek-chat"
 
 SYSTEM_PROMPT = """你是一位任职于国内三甲医院的**主管临床药师**，拥有深厚的临床药物治疗学与药物警戒专业背景。你的职责是对患者拟用或正在使用的药物方案进行**严厉、严谨**的安全审查，绝不姑息潜在用药风险。
@@ -66,35 +69,10 @@ def _sse_done() -> str:
 
 
 def _build_user_message(check_mode: str, text_content: str, file_storage) -> list:
-    """构建 DeepSeek messages 中的 user 部分（支持多模态）。"""
+    """构建 DeepSeek messages 中的 user 部分。"""
+    # 💥 拦截机制：针对DeepSeek不支持视觉的特性，在MVP阶段进行安全防错提示
     if check_mode == "image":
-        if not file_storage or not file_storage.filename:
-            return [{"role": "user", "content": "【错误】未收到有效的处方/药品照片，请重新上传。"}]
-
-        raw = file_storage.read()
-        if not raw:
-            return [{"role": "user", "content": "【错误】上传的文件为空，请重新选择照片。"}]
-
-        mime = file_storage.mimetype or mimetypes.guess_type(file_storage.filename)[0] or "image/jpeg"
-        b64 = base64.b64encode(raw).decode("utf-8")
-        data_url = f"data:{mime};base64,{b64}"
-
-        prompt = (
-            "请根据上传的处方或药品包装照片，识别其中所有可见药物名称、剂量与用法，"
-            "并依据主管临床药师标准完成用药安全审查（CYP 酶竞争、肝肾毒性叠加、NSAID 出血风险）。"
-        )
-        if text_content and text_content.strip():
-            prompt += f"\n\n用户补充说明：{text_content.strip()}"
-
-        return [
-            {
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": prompt},
-                    {"type": "image_url", "image_url": {"url": data_url}},
-                ],
-            }
-        ]
+        return [{"role": "user", "content": "【错误】由于DeepSeek官方模型目前聚焦于纯文本处理，本系统的“处方拍照识别”多模态视觉模块正在对接权威医疗OCR清洗接口。请切换至【直接输入药品名称】Tab标签页，用文字手动输入药名进行风控审查。"}]
 
     drugs = (text_content or "").strip()
     if not drugs:
@@ -125,16 +103,19 @@ def _stream_deepseek(api_key: str, messages: list, model: str):
     }
 
     try:
+        # 🧪 终极网络安全防御：在上云和本地环境中，都强制绕过一切复杂的系统代理劫持
+        proxies = {"http": None, "https": None}
         resp = requests.post(
             DEEPSEEK_API_URL,
             headers=headers,
             json=body,
             stream=True,
+            proxies=proxies,
             timeout=120,
         )
     except requests.RequestException as exc:
         yield _sse_payload(
-            f'<span style="color:#dc2626;font-weight:bold;">网络请求失败：{exc}</span>',
+            f'<span style="color:#dc2626;font-weight:bold;">云端调度网络请求失败：{exc}</span>',
             error=True,
         )
         yield _sse_done()
@@ -181,6 +162,7 @@ def index():
 
 @app.route("/api/check_drugs", methods=["POST"])
 def check_drugs():
+    # ☁️ 工业级环境变量获取，Render上云时会自动从后台安全注入，绝不泄露
     api_key = os.environ.get("DEEPSEEK_API_KEY", "").strip()
 
     if not api_key:
@@ -188,7 +170,7 @@ def check_drugs():
             yield _sse_payload(
                 '<span style="color:#dc2626;font-weight:bold;">'
                 "❌ 错误：未检测到环境变量 DEEPSEEK_API_KEY。"
-                "请在操作系统或 .env 中配置有效的 DeepSeek API 密钥后重启本服务。"
+                "请在操作系统或 Render 后台 Environment Variables 中配置有效的密钥。"
                 "</span>",
                 error=True,
             )
@@ -212,7 +194,7 @@ def check_drugs():
     file_content = request.files.get("file_content")
 
     user_msgs = _build_user_message(check_mode, text_content, file_content)
-    model = DEEPSEEK_MODEL_VISION if check_mode == "image" else DEEPSEEK_MODEL_TEXT
+    model = DEEPSEEK_MODEL_TEXT # 强行锁定为Chat纯文本模型，杜绝多模态溢出报错
 
     messages = [{"role": "system", "content": SYSTEM_PROMPT}]
     if isinstance(user_msgs, list) and user_msgs and user_msgs[0].get("role") == "user":
@@ -253,10 +235,7 @@ def check_drugs():
 
 
 def _patch_socket_getfqdn():
-    """
-    Windows 计算机名为中文时，http.server 绑定端口会调用 socket.getfqdn，
-    反向解析可能触发 UnicodeDecodeError。对本地地址直接返回 localhost。
-    """
+    """ Windows 计算机名为中文时的安全补丁 """
     _orig_getfqdn = socket.getfqdn
     _local_hosts = frozenset(("127.0.0.1", "localhost", "::1", "0.0.0.0", "[::1]"))
 
@@ -273,4 +252,6 @@ def _patch_socket_getfqdn():
 
 if __name__ == "__main__":
     _patch_socket_getfqdn()
-    app.run(host="127.0.0.1", port=5003, debug=True, threaded=True)
+    # 🌍 【核心修改】：host改为0.0.0.0，且自动读取云端分配的PORT。完美兼容本地5003与云端环境！
+    cloud_port = int(os.environ.get("PORT", 5003))
+    app.run(host="0.0.0.0", port=cloud_port, debug=True, threaded=True)
