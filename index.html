@@ -1,0 +1,436 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>PharmaCheck AI · 临床用药风控智能体</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/dompurify@3.0.9/dist/purify.min.js"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            pharma: {
+              50: '#f0fdf4',
+              100: '#dcfce7',
+              200: '#bbf7d0',
+              500: '#22c55e',
+              600: '#16a34a',
+              700: '#15803d',
+              800: '#166534',
+              900: '#14532d',
+            },
+          },
+          fontFamily: {
+            sans: ['"Noto Sans SC"', 'system-ui', 'sans-serif'],
+          },
+        },
+      },
+    };
+  </script>
+  <style>
+    body { font-family: 'Noto Sans SC', system-ui, sans-serif; }
+    .tab-active {
+      background: linear-gradient(135deg, #16a34a 0%, #15803d 100%);
+      color: #fff;
+      box-shadow: 0 4px 14px rgba(22, 163, 74, 0.35);
+    }
+    .tab-inactive {
+      background: #fff;
+      color: #166534;
+      border: 1px solid #bbf7d0;
+    }
+    .drop-zone.dragover {
+      border-color: #16a34a;
+      background: #f0fdf4;
+      transform: scale(1.01);
+    }
+    #result-card .markdown-body h1 { font-size: 1.5rem; font-weight: 700; color: #14532d; margin: 1rem 0 0.5rem; }
+    #result-card .markdown-body h2 { font-size: 1.25rem; font-weight: 600; color: #166534; margin: 0.875rem 0 0.5rem; border-bottom: 1px solid #dcfce7; padding-bottom: 0.25rem; }
+    #result-card .markdown-body h3 { font-size: 1.1rem; font-weight: 600; color: #15803d; margin: 0.75rem 0 0.375rem; }
+    #result-card .markdown-body p { margin: 0.5rem 0; line-height: 1.75; color: #374151; }
+    #result-card .markdown-body ul, #result-card .markdown-body ol { margin: 0.5rem 0 0.5rem 1.25rem; color: #374151; }
+    #result-card .markdown-body li { margin: 0.25rem 0; }
+    #result-card .markdown-body blockquote {
+      border-left: 4px solid #f59e0b;
+      background: #fffbeb;
+      padding: 0.75rem 1rem;
+      margin: 0.75rem 0;
+      color: #92400e;
+      border-radius: 0 0.5rem 0.5rem 0;
+    }
+    #result-card .markdown-body table { width: 100%; border-collapse: collapse; margin: 0.75rem 0; font-size: 0.875rem; }
+    #result-card .markdown-body th, #result-card .markdown-body td { border: 1px solid #dcfce7; padding: 0.5rem 0.75rem; text-align: left; }
+    #result-card .markdown-body th { background: #f0fdf4; color: #14532d; font-weight: 600; }
+    #result-card .markdown-body code { background: #f0fdf4; color: #166534; padding: 0.125rem 0.375rem; border-radius: 0.25rem; font-size: 0.875em; }
+    #result-card .markdown-body pre { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 0.5rem; padding: 1rem; overflow-x: auto; margin: 0.75rem 0; }
+    #result-card .markdown-body strong { color: #b91c1c; }
+    .cursor-blink::after {
+      content: '▋';
+      animation: blink 1s step-end infinite;
+      color: #16a34a;
+      margin-left: 2px;
+    }
+    @keyframes blink { 50% { opacity: 0; } }
+    .pulse-ring { animation: pulse-ring 2s cubic-bezier(0.4, 0, 0.6, 1) infinite; }
+    @keyframes pulse-ring { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+  </style>
+</head>
+<body class="min-h-screen bg-gradient-to-br from-pharma-50 via-white to-emerald-50/40 text-gray-800">
+
+  <!-- 免责声明 -->
+  <div class="bg-red-50 border-b border-red-200">
+    <div class="max-w-5xl mx-auto px-4 py-3 text-center">
+      <p class="text-red-600 font-semibold text-sm sm:text-base tracking-wide">
+        ⚠️ AI 提示仅供学术参考，服药请严格遵医嘱
+      </p>
+    </div>
+  </div>
+
+  <header class="max-w-5xl mx-auto px-4 pt-8 pb-4">
+    <div class="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-4">
+      <div>
+        <div class="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-pharma-100 text-pharma-800 text-xs font-medium mb-3">
+          <span class="w-2 h-2 rounded-full bg-pharma-600 pulse-ring"></span>
+          三甲医院级用药风控 · DeepSeek 驱动
+        </div>
+        <h1 class="text-3xl sm:text-4xl font-bold text-pharma-900 tracking-tight">
+          PharmaCheck <span class="text-pharma-600">AI</span>
+        </h1>
+        <p class="mt-2 text-gray-600 text-sm sm:text-base max-w-xl">
+          临床用药风控智能体 — 严厉核查 CYP450 酶竞争、肝肾毒性叠加及 NSAID 出血风险
+        </p>
+      </div>
+      <div class="flex items-center gap-2 text-xs text-pharma-700 bg-white/80 border border-pharma-200 rounded-lg px-3 py-2 shadow-sm">
+        <svg class="w-4 h-4 text-pharma-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/></svg>
+        Temperature 0.0 · 循证药学审查
+      </div>
+    </div>
+  </header>
+
+  <main class="max-w-5xl mx-auto px-4 pb-16">
+    <!-- Tab 切换 -->
+    <div class="flex flex-wrap gap-2 mb-6" role="tablist">
+      <button id="tab-text" type="button" role="tab" aria-selected="true"
+        class="tab-active flex-1 sm:flex-none px-5 py-2.5 rounded-full text-sm font-semibold transition-all duration-200">
+        直接输入药品名称
+      </button>
+      <button id="tab-image" type="button" role="tab" aria-selected="false"
+        class="tab-inactive flex-1 sm:flex-none px-5 py-2.5 rounded-full text-sm font-semibold transition-all duration-200">
+        上传处方 / 药品照片
+      </button>
+    </div>
+
+    <div class="bg-white/90 backdrop-blur border border-pharma-200 rounded-2xl shadow-xl shadow-pharma-100/50 p-6 sm:p-8">
+
+      <!-- 文本输入面板 -->
+      <div id="panel-text" role="tabpanel">
+        <label for="drug-input" class="block text-sm font-semibold text-pharma-800 mb-2">
+          药品清单（每行一种，或逗号分隔）
+        </label>
+        <textarea id="drug-input" rows="6" placeholder="例如：&#10;阿托伐他汀 20mg qn&#10;氨氯地平 5mg qd&#10;布洛芬 0.3g tid&#10;华法林 2.5mg qd"
+          class="w-full rounded-xl border border-pharma-200 focus:border-pharma-500 focus:ring-2 focus:ring-pharma-200 px-4 py-3 text-gray-800 placeholder-gray-400 resize-y transition"></textarea>
+      </div>
+
+      <!-- 图片上传面板 -->
+      <div id="panel-image" role="tabpanel" class="hidden">
+        <label class="block text-sm font-semibold text-pharma-800 mb-2">处方或药品包装照片</label>
+        <div id="drop-zone"
+          class="drop-zone relative flex flex-col items-center justify-center w-full min-h-[200px] border-2 border-dashed border-pharma-300 rounded-2xl bg-pharma-50/50 cursor-pointer transition-all duration-200 hover:border-pharma-500 hover:bg-pharma-50">
+          <input type="file" id="file-input" accept="image/*" class="absolute inset-0 w-full h-full opacity-0 cursor-pointer" />
+          <svg class="w-12 h-12 text-pharma-400 mb-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/>
+          </svg>
+          <p class="text-pharma-700 font-medium">拖拽图片到此处，或点击选择文件</p>
+          <p class="text-gray-500 text-xs mt-1">支持 JPG / PNG / WEBP，单张处方或药盒照片</p>
+        </div>
+        <div id="preview-wrap" class="hidden mt-4 flex items-start gap-4 p-4 bg-pharma-50 rounded-xl border border-pharma-200">
+          <img id="preview-img" alt="预览" class="w-24 h-24 object-cover rounded-lg border border-pharma-200 shadow-sm" />
+          <div class="flex-1 min-w-0">
+            <p id="preview-name" class="text-sm font-medium text-pharma-800 truncate"></p>
+            <button type="button" id="clear-file" class="mt-2 text-xs text-red-600 hover:text-red-800 font-medium">移除图片</button>
+          </div>
+        </div>
+        <label for="image-note" class="block text-sm font-semibold text-pharma-800 mt-4 mb-2">补充说明（可选）</label>
+        <input type="text" id="image-note" placeholder="如：患者 72 岁，eGFR 45，正在服用华法林"
+          class="w-full rounded-xl border border-pharma-200 focus:border-pharma-500 focus:ring-2 focus:ring-pharma-200 px-4 py-2.5 text-sm transition" />
+      </div>
+
+      <!-- 提交按钮 -->
+      <button id="submit-btn" type="button"
+        class="mt-6 w-full sm:w-auto inline-flex items-center justify-center gap-2 px-8 py-3.5 rounded-xl bg-gradient-to-r from-pharma-600 to-pharma-700 hover:from-pharma-700 hover:to-pharma-800 text-white font-semibold shadow-lg shadow-pharma-600/30 transition-all duration-200 disabled:opacity-60 disabled:cursor-not-allowed">
+        <svg id="btn-icon" class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4"/>
+        </svg>
+        <span id="btn-label">启动临床用药安全审查</span>
+      </button>
+    </div>
+
+    <!-- 结果卡片 -->
+    <section id="result-section" class="hidden mt-8">
+      <div class="flex items-center gap-2 mb-3">
+        <span class="w-1 h-6 bg-pharma-600 rounded-full"></span>
+        <h2 class="text-lg font-bold text-pharma-900">审查报告</h2>
+        <span id="streaming-badge" class="hidden text-xs bg-pharma-100 text-pharma-700 px-2 py-0.5 rounded-full font-medium">生成中…</span>
+      </div>
+      <div id="result-card" class="bg-white rounded-2xl border border-gray-100 shadow-xl p-6 sm:p-8 min-h-[120px]">
+        <div id="result-content" class="markdown-body prose max-w-none text-gray-800 leading-relaxed"></div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="max-w-5xl mx-auto px-4 pb-8 text-center text-xs text-gray-400">
+    PharmaCheck AI © 临床用药风控 · 端口 5003
+  </footer>
+
+  <script>
+    (function () {
+      marked.setOptions({ breaks: true, gfm: true });
+
+      let currentMode = 'text';
+      let selectedFile = null;
+      let rawMarkdown = '';
+      let isStreaming = false;
+      let typewriterQueue = '';
+      let typewriterTimer = null;
+      let abortController = null;
+
+      const tabText = document.getElementById('tab-text');
+      const tabImage = document.getElementById('tab-image');
+      const panelText = document.getElementById('panel-text');
+      const panelImage = document.getElementById('panel-image');
+      const drugInput = document.getElementById('drug-input');
+      const dropZone = document.getElementById('drop-zone');
+      const fileInput = document.getElementById('file-input');
+      const previewWrap = document.getElementById('preview-wrap');
+      const previewImg = document.getElementById('preview-img');
+      const previewName = document.getElementById('preview-name');
+      const clearFileBtn = document.getElementById('clear-file');
+      const imageNote = document.getElementById('image-note');
+      const submitBtn = document.getElementById('submit-btn');
+      const btnLabel = document.getElementById('btn-label');
+      const resultSection = document.getElementById('result-section');
+      const resultContent = document.getElementById('result-content');
+      const streamingBadge = document.getElementById('streaming-badge');
+
+      function setTab(mode) {
+        currentMode = mode;
+        const isText = mode === 'text';
+        tabText.className = isText
+          ? 'tab-active flex-1 sm:flex-none px-5 py-2.5 rounded-full text-sm font-semibold transition-all duration-200'
+          : 'tab-inactive flex-1 sm:flex-none px-5 py-2.5 rounded-full text-sm font-semibold transition-all duration-200';
+        tabImage.className = !isText
+          ? 'tab-active flex-1 sm:flex-none px-5 py-2.5 rounded-full text-sm font-semibold transition-all duration-200'
+          : 'tab-inactive flex-1 sm:flex-none px-5 py-2.5 rounded-full text-sm font-semibold transition-all duration-200';
+        tabText.setAttribute('aria-selected', isText);
+        tabImage.setAttribute('aria-selected', !isText);
+        panelText.classList.toggle('hidden', !isText);
+        panelImage.classList.toggle('hidden', isText);
+      }
+
+      tabText.addEventListener('click', () => setTab('text'));
+      tabImage.addEventListener('click', () => setTab('image'));
+
+      function handleFile(file) {
+        if (!file || !file.type.startsWith('image/')) {
+          alert('请选择有效的图片文件（JPG / PNG / WEBP）');
+          return;
+        }
+        selectedFile = file;
+        previewName.textContent = file.name;
+        const reader = new FileReader();
+        reader.onload = (e) => {
+          previewImg.src = e.target.result;
+          previewWrap.classList.remove('hidden');
+        };
+        reader.readAsDataURL(file);
+      }
+
+      fileInput.addEventListener('change', (e) => {
+        if (e.target.files[0]) handleFile(e.target.files[0]);
+      });
+
+      clearFileBtn.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        selectedFile = null;
+        fileInput.value = '';
+        previewWrap.classList.add('hidden');
+        previewImg.src = '';
+      });
+
+      ['dragenter', 'dragover'].forEach((ev) => {
+        dropZone.addEventListener(ev, (e) => {
+          e.preventDefault();
+          dropZone.classList.add('dragover');
+        });
+      });
+      ['dragleave', 'drop'].forEach((ev) => {
+        dropZone.addEventListener(ev, (e) => {
+          e.preventDefault();
+          dropZone.classList.remove('dragover');
+        });
+      });
+      dropZone.addEventListener('drop', (e) => {
+        const file = e.dataTransfer.files[0];
+        if (file) handleFile(file);
+      });
+
+      function renderMarkdown(md, showCursor) {
+        const html = DOMPurify.sanitize(marked.parse(md || ''));
+        resultContent.innerHTML = html + (showCursor ? '<span class="cursor-blink"></span>' : '');
+      }
+
+      function flushTypewriter() {
+        if (!typewriterQueue.length) {
+          if (!isStreaming) {
+            resultContent.classList.remove('cursor-blink');
+            renderMarkdown(rawMarkdown, false);
+          }
+          return;
+        }
+        const charsPerTick = Math.max(1, Math.ceil(typewriterQueue.length / 8));
+        const chunk = typewriterQueue.slice(0, charsPerTick);
+        typewriterQueue = typewriterQueue.slice(charsPerTick);
+        rawMarkdown += chunk;
+        renderMarkdown(rawMarkdown, true);
+        typewriterTimer = requestAnimationFrame(() => {
+          setTimeout(flushTypewriter, 12);
+        });
+      }
+
+      function enqueueTypewriter(text) {
+        typewriterQueue += text;
+        if (!typewriterTimer) flushTypewriter();
+      }
+
+      function resetResult() {
+        rawMarkdown = '';
+        typewriterQueue = '';
+        if (typewriterTimer) cancelAnimationFrame(typewriterTimer);
+        typewriterTimer = null;
+        resultContent.innerHTML = '';
+        resultSection.classList.remove('hidden');
+        streamingBadge.classList.remove('hidden');
+      }
+
+      function setLoading(loading) {
+        submitBtn.disabled = loading;
+        btnLabel.textContent = loading ? '审查进行中…' : '启动临床用药安全审查';
+      }
+
+      async function parseSSEStream(response) {
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder('utf-8');
+        let buffer = '';
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          const parts = buffer.split('\n\n');
+          buffer = parts.pop() || '';
+
+          for (const part of parts) {
+            const lines = part.split('\n');
+            for (const line of lines) {
+              if (!line.startsWith('data:')) continue;
+              const data = line.replace(/^data:\s*/, '').trim();
+              if (data === '[DONE]') continue;
+              try {
+                const payload = JSON.parse(data);
+                if (payload.content) {
+                  if (payload.error) {
+                    resultContent.innerHTML = payload.content;
+                    typewriterQueue = '';
+                  } else {
+                    enqueueTypewriter(payload.content);
+                  }
+                }
+              } catch (err) {
+                console.warn('SSE parse skip', err);
+              }
+            }
+          }
+        }
+      }
+
+      submitBtn.addEventListener('click', async () => {
+        if (isStreaming) return;
+
+        if (currentMode === 'text') {
+          if (!drugInput.value.trim()) {
+            alert('请输入至少一种药品名称');
+            return;
+          }
+        } else {
+          if (!selectedFile) {
+            alert('请上传处方或药品照片');
+            return;
+          }
+        }
+
+        if (abortController) abortController.abort();
+        abortController = new AbortController();
+
+        resetResult();
+        isStreaming = true;
+        setLoading(true);
+
+        const formData = new FormData();
+        formData.append('check_mode', currentMode);
+        formData.append('text_content', currentMode === 'text' ? drugInput.value.trim() : (imageNote.value.trim() || ''));
+        if (currentMode === 'image' && selectedFile) {
+          formData.append('file_content', selectedFile);
+        }
+
+        try {
+          const response = await fetch('/api/check_drugs', {
+            method: 'POST',
+            body: formData,
+            signal: abortController.signal,
+          });
+
+          if (!response.ok) {
+            resultContent.innerHTML = '<span style="color:#dc2626;font-weight:bold;">请求失败：HTTP ' + response.status + '</span>';
+            return;
+          }
+
+          const contentType = response.headers.get('Content-Type') || '';
+          if (!contentType.includes('text/event-stream')) {
+            const text = await response.text();
+            resultContent.innerHTML = '<span style="color:#dc2626;font-weight:bold;">' + (text || '未知响应') + '</span>';
+            return;
+          }
+
+          await parseSSEStream(response);
+
+          const waitDone = () => new Promise((resolve) => {
+            const check = () => {
+              if (!typewriterQueue.length) resolve();
+              else setTimeout(check, 50);
+            };
+            check();
+          });
+          await waitDone();
+          renderMarkdown(rawMarkdown, false);
+        } catch (err) {
+          if (err.name !== 'AbortError') {
+            resultContent.innerHTML = '<span style="color:#dc2626;font-weight:bold;">连接异常：' + err.message + '</span>';
+          }
+        } finally {
+          isStreaming = false;
+          setLoading(false);
+          streamingBadge.classList.add('hidden');
+          abortController = null;
+        }
+      });
+    })();
+  </script>
+</body>
+</html>

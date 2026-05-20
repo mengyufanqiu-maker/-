@@ -1,0 +1,6 @@
+# Python 3.7 compatible pins
+Flask==2.2.5
+Werkzeug==2.2.3
+flask-cors==3.0.10
+requests==2.28.2
+python-dotenv==0.21.1
